@@ -7,7 +7,8 @@ mod state;
 declare_id!("BK8SfxedQ9Ba7jMoxFBbY65kZC8zi3jG259vGTSB5E9m");
 
 #[program]
-pub mod lending {
+pub mod lending_protocol {
+
     use super::*;
 
     pub fn init_bank(
@@ -18,10 +19,11 @@ pub mod lending {
         process_init_bank(ctx, liquidation_threshold, max_ltv)
     }
 
-    pub fn init_user(cctx: Context<InitUser>, usdc_address: Pubkey) -> Result<()> {
+    pub fn init_user(ctx: Context<InitUser>, usdc_address: Pubkey) -> Result<()> {
         process_init_user(ctx, usdc_address)
     }
-}
 
-#[derive(Accounts)]
-pub struct Initialize {}
+    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        process_deposit(ctx, amount)
+    }
+}
