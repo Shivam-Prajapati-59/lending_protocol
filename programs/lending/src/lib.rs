@@ -1,8 +1,9 @@
 use anchor_lang::prelude::*;
 
-pub mod error;
-pub mod instructions;
-pub mod state;
+mod constant;
+mod error;
+mod instructions;
+mod state;
 
 declare_id!("BK8SfxedQ9Ba7jMoxFBbY65kZC8zi3jG259vGTSB5E9m");
 

@@ -1,64 +1,84 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{ Mint, TokenAccount, TokenInterface };
+use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token_interface::{ self, Mint, TokenAccount, TokenInterface, TransferChecked };
 use crate::state::*;
 
 #[derive(Accounts)]
-pub struct InitBank<'info> {
+pub struct Deposit<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
     pub mint: InterfaceAccount<'info, Mint>,
     #[account(
-        init, 
-        space = 8 + Bank::INIT_SPACE, 
-        payer = signer,
+        mut, 
         seeds = [mint.key().as_ref()],
-        bump, 
-    )]
+        bump,
+    )]  
     pub bank: Account<'info, Bank>,
     #[account(
-        init, 
-        token::mint = mint, 
-        token::authority = bank_token_account,
-        payer = signer,
+        mut, 
         seeds = [b"treasury", mint.key().as_ref()],
-        bump,
-    )]
+        bump, 
+    )]  
     pub bank_token_account: InterfaceAccount<'info, TokenAccount>,
-    pub token_program: Interface<'info, TokenInterface>, 
-    pub system_program: Program <'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct InitUser<'info> {
-    #[account(mut)]
-    pub signer: Signer<'info>,
     #[account(
-        init,
-        payer = signer, 
-        space = 8 + User::INIT_SPACE,
+        mut, 
         seeds = [signer.key().as_ref()],
         bump,
-    )]
+    )]  
     pub user_account: Account<'info, User>,
-    pub system_program: Program <'info, System>,
+    #[account( 
+        mut,
+        associated_token::mint = mint, 
+        associated_token::authority = signer,
+        associated_token::token_program = token_program,
+    )]
+    pub user_token_account: InterfaceAccount<'info, TokenAccount>, 
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
 }
 
-pub fn process_init_bank(ctx: Context<InitBank>, liquidation_threshold: u64, max_ltv: u64) -> Result<()> {
+pub fn process_deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+    let transfer_cpi_accounts = TransferChecked {
+        from: ctx.accounts.user_token_account.to_account_info(),
+        mint: ctx.accounts.mint.to_account_info(),
+        to: ctx.accounts.bank_token_account.to_account_info(),
+        authority: ctx.accounts.signer.to_account_info(),
+    };
+
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new(cpi_program, transfer_cpi_accounts);
+    let decimals = ctx.accounts.mint.decimals;
+
+    token_interface::transfer_checked(cpi_ctx, amount, decimals)?;
+
     let bank = &mut ctx.accounts.bank;
-    bank.mint_address = ctx.accounts.mint.key();
-    bank.authority = ctx.accounts.signer.key();
-    bank.liquidation_threshold = liquidation_threshold;
-    bank.max_ltv = max_ltv;
-    Ok(())
-}
 
-pub fn process_init_user(ctx: Context<InitUser>, usdc_address: Pubkey) -> Result<()> {
-    let user = &mut ctx.accounts.user_account;
-    user.owner = ctx.accounts.signer.key();
-    user.usdc_address = usdc_address;
+    if bank.total_deposits == 0 {
+        bank.total_deposits = amount;
+        bank.total_deposit_shares = amount;
+    }
     
-    let now = Clock::get()?.unix_timestamp; 
-    user.last_updated = now;
+    let deposit_ratio = amount.checked_div(bank.total_deposits).unwrap();
+    let users_shares = bank.total_deposit_shares.checked_mul(deposit_ratio).unwrap();
+    
+    let user = &mut ctx.accounts.user_account;
+    
+    match ctx.accounts.mint.to_account_info().key() {
+        key if key == user.usdc_address => {
+            user.deposited_usdc += amount;
+            user.deposited_usdc_shares += users_shares;
+        },
+        _ => {
+            user.deposited_sol += amount;
+            user.deposited_sol_shares += users_shares; 
+        }
+    }
+
+    bank.total_deposits += amount;
+    bank.total_deposit_shares += users_shares;
+
+    user.last_updated = Clock::get()?.unix_timestamp;
 
     Ok(())
 }
