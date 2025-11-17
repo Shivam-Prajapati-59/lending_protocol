@@ -55,4 +55,6 @@ pub struct User {
     pub health_factor: u64,
     /// Last updated timestamp
     pub last_updated: i64,
+    /// Last Updated Borrow
+    pub last_updated_borrowed: i64,
 }

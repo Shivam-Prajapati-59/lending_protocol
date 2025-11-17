@@ -3,6 +3,7 @@ use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
+use std::f32::consts::E;
 
 #[derive(Accounts)]
 pub struct Withdraw<'info> {
@@ -58,7 +59,7 @@ pub fn process_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         return Err(ErrorCode::InsufficientFunds.into());
     }
 
-    let timr_diff = user.last_updated - Clock::get()? > unix_timestamp;
+    let time_diff = Clock::get()?.unix_timestamp - user.last_updated;
 
     let bank = &mut ctx.accounts.bank;
 

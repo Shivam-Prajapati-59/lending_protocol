@@ -6,3 +6,5 @@ pub use borrow::*;
 pub use withdraw::*;
 mod borrow;
 pub mod withdraw;
+pub use repay::*;
+pub mod repay;

@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-mod constant;
+mod constants;
 mod error;
 mod instructions;
 mod state;
@@ -9,6 +9,8 @@ declare_id!("BK8SfxedQ9Ba7jMoxFBbY65kZC8zi3jG259vGTSB5E9m");
 
 #[program]
 pub mod lending_protocol {
+    use crate::instructions::{process_borrow, process_repay, Borrow, Repay};
+
     use super::*;
 
     pub fn init_bank(
@@ -29,5 +31,13 @@ pub mod lending_protocol {
 
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         instructions::withdraw::process_withdraw(ctx, amount)
+    }
+
+    pub fn borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
+        process_borrow(ctx, amount)
+    }
+
+    pub fn repay(ctx: Context<Repay>, amount: u64) -> Result<()> {
+        process_repay(ctx, amount)
     }
 }
