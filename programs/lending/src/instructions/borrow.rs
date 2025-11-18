@@ -46,7 +46,11 @@ pub struct Borrow<'info> {
     pub system_program: Program<'info, System>,
 }
 
-
+// 1. Check if user has enough collateral to borrow
+// 2. Warn if borrowing beyond the safe amount but still allow if within the max borrowable amount
+// 3. Make a CPI transfer from the bank's token account to the user's token account
+// 4. Update the user's borrowed amount and total borrowed value
+// 5. Update the bank's total borrows and total borrow shares
 
 pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
     // Check if user has enough collateral to borrow
@@ -117,15 +121,13 @@ pub fn process_borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
     match ctx.accounts.mint.to_account_info().key() {
         key if key == user.usdc_address => {
             user.borrowed_usdc += amount;
-            user.borrowed_usdc_shares += users_shares;
+            user.deposited_usdc_shares += users_shares;
         },
         _ => {
             user.borrowed_sol += amount;
-            user.borrowed_sol_shares += users_shares;
+            user.deposited_sol_shares += users_shares;
         }
     }
-
-    user.last_updated_borrowed = Clock::get()?.unix_timestamp;
 
     Ok(())
 }
