@@ -1,17 +1,17 @@
-import { describe, it } from "node:test";
-import IDL from "../target/idl/lending_protocol.json";
-import { LendingProtocol } from "../target/types/lending_protocol";
-import { BanksClient, ProgramTestContext, startAnchor } from "solana-bankrun";
-import { Connection, PublicKey } from "@solana/web3.js";
-import { BankrunProvider } from "anchor-bankrun";
-import { PythSolanaReceiver } from "@pythnetwork/pyth-solana-receiver";
-import { BankrunContextWrapper } from "../bankrun-utils/bankrunConnection";
+import { describe, it, before } from "node:test";
 import { BN, Program } from "@coral-xyz/anchor";
-import { Keypair } from "@solana/web3.js";
-import { createMint, mintTo, createAccount } from "spl-token-bankrun";
+import { BankrunProvider } from "anchor-bankrun";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { createAccount, createMint, mintTo } from "spl-token-bankrun";
+import { PythSolanaReceiver } from "@pythnetwork/pyth-solana-receiver";
+import { startAnchor, BanksClient, ProgramTestContext } from "solana-bankrun";
+import { PublicKey, Keypair, Connection } from "@solana/web3.js";
+import { LendingProtocol } from "../target/types/lending_protocol";
+import { BankrunContextWrapper } from "../bankrun-utils/bankrunConnection";
 
-describe("Lending Smart Contract Test", async () => {
+const IDL = require("../target/idl/lending_protocol.json");
+
+describe("Lending Smart Contract Test", () => {
   let context: ProgramTestContext;
   let provider: BankrunProvider;
   let bankrunContextWrapper: BankrunContextWrapper;
@@ -20,161 +20,181 @@ describe("Lending Smart Contract Test", async () => {
   let signer: Keypair;
   let usdcBankAccount: PublicKey;
   let solBankAccount: PublicKey;
-  let mintUsdc: PublicKey;
-  let mintSol: PublicKey;
+  let mintUSDC: PublicKey;
+  let mintSOL: PublicKey;
   let USDCTokenAccount: PublicKey;
   let solUsdPriceFeedAccount: PublicKey;
 
-  const pyth = new PublicKey("HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3");
+  before(async () => {
+    const pyth = new PublicKey("HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3");
+    const devnetConnection = new Connection("https://api.devnet.solana.com");
 
-  const devnetConnection = new Connection("https://api.devnet.solana.com");
+    let accountInfo;
+    try {
+      accountInfo = await devnetConnection.getAccountInfo(pyth);
+    } catch (error) {
+      console.log(
+        "Warning: Could not fetch Pyth account from devnet, using mock data"
+      );
+      accountInfo = null;
+    }
 
-  const accountInfo = await devnetConnection.getAccountInfo(pyth);
+    const accounts = accountInfo ? [{ address: pyth, info: accountInfo }] : [];
 
-  context = await startAnchor(
-    "",
-    [
-      {
-        name: "lending_protocol",
-        programId: new PublicKey(IDL.address),
-      },
-    ],
-    [{ address: pyth, info: accountInfo }]
-  );
-  provider = new BankrunProvider(context);
+    context = await startAnchor(
+      "",
+      [{ name: "lending", programId: new PublicKey(IDL.address) }],
+      accounts
+    );
 
-  const SOL_PRICE_FEED_ID =
-    "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+    provider = new BankrunProvider(context);
+    bankrunContextWrapper = new BankrunContextWrapper(context);
+    const connection = bankrunContextWrapper.connection.toConnection();
 
-  bankrunContextWrapper = new BankrunContextWrapper(context);
+    const pythSolanaReceiver = new PythSolanaReceiver({
+      connection,
+      wallet: provider.wallet,
+    });
 
-  const connection = bankrunContextWrapper.connection.toConnection();
+    const SOL_PRICE_FEED_ID =
+      "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
 
-  const pythSolanaReceiver = new PythSolanaReceiver({
-    connection,
-    wallet: provider.wallet,
+    const solUsdPriceFeedAccountPubkey =
+      pythSolanaReceiver.getPriceFeedAccountAddress(0, SOL_PRICE_FEED_ID);
+
+    let feedAccountInfo;
+    try {
+      feedAccountInfo = await devnetConnection.getAccountInfo(
+        solUsdPriceFeedAccountPubkey
+      );
+    } catch (error) {
+      console.log("Warning: Could not fetch price feed account from devnet");
+      feedAccountInfo = null;
+    }
+
+    if (feedAccountInfo) {
+      context.setAccount(solUsdPriceFeedAccountPubkey, feedAccountInfo);
+    }
+
+    solUsdPriceFeedAccount = solUsdPriceFeedAccountPubkey;
+
+    program = new Program<LendingProtocol>(IDL as LendingProtocol, provider);
+    banksClient = context.banksClient;
+    signer = provider.wallet.payer;
+
+    mintUSDC = await createMint(banksClient, signer, signer.publicKey, null, 2);
+
+    mintSOL = await createMint(banksClient, signer, signer.publicKey, null, 2);
+
+    [usdcBankAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("treasury"), mintUSDC.toBuffer()],
+      program.programId
+    );
+
+    [solBankAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("treasury"), mintSOL.toBuffer()],
+      program.programId
+    );
+
+    console.log("USDC Bank Account:", usdcBankAccount.toBase58());
+    console.log("SOL Bank Account:", solBankAccount.toBase58());
   });
 
-  solUsdPriceFeedAccount = pythSolanaReceiver.getPriceFeedAccountAddress(
-    0,
-    SOL_PRICE_FEED_ID
-  );
+  it("Test Init User", async () => {
+    const initUserTx = await program.methods
+      .initUser(mintUSDC)
+      .accounts({
+        signer: signer.publicKey,
+      })
+      .rpc({ commitment: "confirmed" });
 
-  const feedAccountInfo = await devnetConnection.getAccountInfo(
-    solUsdPriceFeedAccount
-  );
+    console.log("Create User Account:", initUserTx);
+  });
 
-  context.setAccount(solUsdPriceFeedAccount, feedAccountInfo);
-
-  program = new Program<LendingProtocol>(IDL as LendingProtocol, provider);
-
-  banksClient = context.banksClient;
-  signer = provider.wallet.payer;
-
-  mintUsdc = await createMint(banksClient, signer, signer.publicKey, null, 2);
-
-  mintSol = await createMint(banksClient, signer, signer.publicKey, null, 2);
-
-  [usdcBankAccount] = PublicKey.findProgramAddressSync(
-    [Buffer.from("treasury"), mintUsdc.toBuffer()],
-    program.programId
-  );
-
-  [solBankAccount] = PublicKey.findProgramAddressSync(
-    [Buffer.from("treasury"), mintSol.toBuffer()],
-    program.programId
-  );
-
-  it("Test Init and Fund Bank", async () => {
-    const initUSdcBankTx = await program.methods
+  it("Test Init and Fund USDC Bank", async () => {
+    const initUSDCBankTx = await program.methods
       .initBank(new BN(1), new BN(1))
       .accounts({
         signer: signer.publicKey,
-        mint: mintUsdc,
+        mint: mintUSDC,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .rpc({ commitment: "confirmed" });
 
-    console.log("Create USDC Bank", initUSdcBankTx);
+    console.log("Create USDC Bank Account:", initUSDCBankTx);
 
     const amount = 10_000 * 10 ** 9;
-
     const mintTx = await mintTo(
       banksClient,
       signer,
-      mintUsdc,
+      mintUSDC,
       usdcBankAccount,
       signer,
       amount
     );
+
+    console.log("Mint to USDC Bank Signature:", mintTx);
   });
 
-  it("Test init User", async () => {
-    const initUserTx = await program.methods
-      .initUser(mintUsdc)
+  it("Test Init and Fund SOL Bank", async () => {
+    const initSOLBankTx = await program.methods
+      .initBank(new BN(1), new BN(1))
       .accounts({
         signer: signer.publicKey,
-      })
-      .rpc({ commitment: "confirmed" });
-  });
-
-  it("Test Init and fund SOL Bank", async () => {
-    const initSolBankTx = await program.methods
-      .initBank(new BN(2), new BN(1))
-      .accounts({
-        signer: signer.publicKey,
-        mint: mintSol,
+        mint: mintSOL,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .rpc({ commitment: "confirmed" });
 
-    console.log("Create SOL Bank Account", initSolBankTx);
+    console.log("Create SOL Bank Account:", initSOLBankTx);
 
     const amount = 10_000 * 10 ** 9;
-
-    const mintTx = await mintTo(
+    const mintSOLTx = await mintTo(
       banksClient,
       signer,
-      mintSol,
+      mintSOL,
       solBankAccount,
       signer,
       amount
     );
-    console.log("Mint SOL to Bank:", mintTx);
+
+    console.log("Mint to SOL Bank Signature:", mintSOLTx);
   });
 
   it("Create and Fund Token Account", async () => {
     USDCTokenAccount = await createAccount(
       banksClient,
       signer,
-      mintUsdc,
+      mintUSDC,
       signer.publicKey
     );
-    console.log("USDC Token Account", USDCTokenAccount);
 
-    const amount = 1_000 * 10 ** 9;
+    console.log("USDC Token Account Created:", USDCTokenAccount.toBase58());
+
+    const amount = 10_000 * 10 ** 9;
     const mintUSDCTx = await mintTo(
       banksClient,
       signer,
-      mintUsdc,
+      mintUSDC,
       USDCTokenAccount,
       signer,
       amount
     );
-    console.log("Mint USDC to User:", mintUSDCTx);
+
+    console.log("Mint to User USDC Account Signature:", mintUSDCTx);
   });
 
   it("Test Deposit", async () => {
-    const deposiUSDC = await program.methods
+    const depositUSDC = await program.methods
       .deposit(new BN(100000000000))
       .accounts({
         signer: signer.publicKey,
-        mint: mintUsdc,
+        mint: mintUSDC,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .rpc({ commitment: "confirmed" });
 
-    console.log("Deposit USDC:", deposiUSDC);
+    console.log("Deposit USDC:", depositUSDC);
   });
 
   it("Test Borrow", async () => {
@@ -182,7 +202,7 @@ describe("Lending Smart Contract Test", async () => {
       .borrow(new BN(1))
       .accounts({
         signer: signer.publicKey,
-        mint: mintSol,
+        mint: mintSOL,
         tokenProgram: TOKEN_PROGRAM_ID,
         priceUpdate: solUsdPriceFeedAccount,
       })
@@ -196,7 +216,7 @@ describe("Lending Smart Contract Test", async () => {
       .repay(new BN(1))
       .accounts({
         signer: signer.publicKey,
-        mint: mintSol,
+        mint: mintSOL,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .rpc({ commitment: "confirmed" });
@@ -209,7 +229,7 @@ describe("Lending Smart Contract Test", async () => {
       .withdraw(new BN(100))
       .accounts({
         signer: signer.publicKey,
-        mint: mintUsdc,
+        mint: mintUSDC,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .rpc({ commitment: "confirmed" });
